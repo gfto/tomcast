@@ -1,0 +1,7 @@
+tomcast
+=======
+
+tomcast reads mpeg transport streams over http or udp (multicast or unicast)
+and outputs them to chosen multicast group. Basically a simple http2multicast
+daemon designed to work 24/7.
+
