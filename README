@@ -1,7 +1,53 @@
 tomcast
 =======
+tomcast reads mpeg transport streams over http or udp (multicast or
+unicast) and outputs them to chosen multicast group. Basically a simple
+http2multicast daemon designed to work 24/7.
 
-tomcast reads mpeg transport streams over http or udp (multicast or unicast)
-and outputs them to chosen multicast group. Basically a simple http2multicast
-daemon designed to work 24/7.
+License
+=======
+tsdecrypt is released under GNU GPL v2.
 
+Development
+===========
+The development is done using git. tomcast repository is hosted
+at http://github.com/gfto/tomcast
+
+To clone the repository issue the following commands:
+
+   git clone git://github.com/gfto/tomcast.git
+   cd tomcast
+   git submodule init
+   git submodule update
+   make
+
+The code is developed and tested under modern Linux. It is also
+compiled from time to time under OS X but is not tested there.
+
+To see all Makefile targets run 'make help'.
+
+Updating the code
+=================
+To update cloned tomcast, go to the directory where the repository
+is cloned and run the following commands:
+
+   git fetch origin
+   git merge origin/master
+   git submodule update
+   make clean all
+
+tomcast's master branch should always be useful so it is safe to
+use it instead of official release. The master branch will always
+be better than any released version.
+
+Releases
+========
+Official releases can be downloaded from tomcast home page which is
+
+   http://georgi.unixsol.org/programs/tomcast/
+
+Contact
+=======
+For patches, bug reports, complaints and so on send e-mail to
+
+   Georgi Chorbadzhiyski <georgi@unixsol.org>
