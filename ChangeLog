@@ -1,0 +1,26 @@
+v1.20 | 17 Aug 2013
+  * First publicly released version.
+
+v1.15 | 13 Sep 2012
+  * Add option to send reset packets when source have been reconnected.
+    These packets prevent VLC from hanging.
+
+v1.14 | 16 May 2012
+  * Set send buffer size.
+
+v1.13 | 01 Mar 2012
+  * Use mpeg_sync on connect.
+  * Update libfuncs to latest version from upstream repo.
+
+v1.12 | 10 Dec 2010
+  * Allow URL to contain anything
+
+v1.11 | 21 Jul 2010
+  * Send X-Smart-Client: yes in GET request
+
+v1.10 | 24 Feb 2010
+  * Check for read errors and reconnect
+  * Check for write errors and reconnect udp socket if there are any
+
+v1.00 | 09 Feb 2010
+  * First version.

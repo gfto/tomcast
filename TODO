@@ -1,0 +1,8 @@
+- Write documentation.
+- Write man page.
+- Add install/uninstall targets in Makefile.
+- Add long options using getopt_long.
+- Add RTP input.
+- Add RTP output.
+- Add RELEASE file and use it for versioning.
+- The code is written in 2010, modernize it...

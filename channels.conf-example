@@ -1,0 +1,16 @@
+## The config file format is (use TABs not spaces!):
+##
+## channel[tab]dest[tab]source
+##
+## Lines starting with # are considered comments.
+
+## Read channel from http://example.com/stb/btv.mpg and output it to multicast address 239.78.78.78:5000
+chan1	239.78.78.78:5000	http://example.com/chan1.ts
+
+## chan2 have multiple sources. If a source doesn't work, tomcast switches to the next one.
+chan2	239.79.79.79:5000	http://example.com/chan2.ts
+chan2	239.79.79.79:5000	http://example.com/chan2.ts
+chan2	239.79.79.79:5000	http://example.com/chan2.ts
+
+## chan3 have multicast source, tomcast just rewrites the multicast group.
+chan3	239.80.80.80:5000	udp://239.1.2.3:5000/
