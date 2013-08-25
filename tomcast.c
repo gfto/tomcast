@@ -537,7 +537,7 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 			if (strstr(buf,"HTTP/1.") != NULL) {
 				if (regexec(&http_response,buf,3,res,0) != REG_NOMATCH) {
 					char codestr[4];
-					if ((unsigned int)res[1].rm_eo-res[1].rm_so < sizeof(xresponse)) {
+					if ((unsigned long)(res[1].rm_eo - res[1].rm_so) < sizeof(xresponse)) {
 						strncpy(xresponse, &buf[res[1].rm_so], res[1].rm_eo-res[1].rm_so);
 						xresponse[res[1].rm_eo-res[1].rm_so] = '\0';
 						chomp(xresponse);
