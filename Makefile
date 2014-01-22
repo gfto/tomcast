@@ -1,5 +1,6 @@
-CC = $(CROSS)$(TARGET)gcc
-STRIP = $(CROSS)$(TARGET)strip
+CC = cc
+STRIP = strip
+CROSS := $(TARGET)
 CFLAGS = -ggdb -Wall -Wextra -Wshadow -Wformat-security -Wno-strict-aliasing -O2
 RM = /bin/rm -f
 Q = @
@@ -18,15 +19,15 @@ $(FUNCS_LIB):
 
 tomcast: $(tomcast_OBJS)
 	$(Q)echo "  LINK	tomcast"
-	$(Q)$(CC) $(CFLAGS) $(tomcast_OBJS) $(LIBS) -o tomcast
+	$(Q)$(CROSS)$(CC) $(CFLAGS) $(tomcast_OBJS) $(LIBS) -o tomcast
 
 %.o: %.c
 	$(Q)echo "  CC	tomcast		$<"
-	$(Q)$(CC) $(CFLAGS)  -c $<
+	$(Q)$(CROSS)$(CC) $(CFLAGS)  -c $<
 
 strip:
 	$(Q)echo "  STRIP	tomcast"
-	$(Q)$(STRIP) tomcast
+	$(Q)$(CROSS)$(STRIP) tomcast
 
 clean:
 	$(Q)echo "  RM	$(tomcast_OBJS)"
