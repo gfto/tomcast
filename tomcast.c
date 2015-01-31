@@ -851,7 +851,7 @@ void * proxy_ts_stream(void *self) {
 
 			if (send_reset) {
 				send_reset = 0;
-				written = fdwrite(r->clientsock, reset, FRAME_PACKET_SIZE);
+				fdwrite(r->clientsock, reset, FRAME_PACKET_SIZE);
 			}
 			written = fdwrite(r->clientsock, buf, FRAME_PACKET_SIZE);
 			if (written == -1) {
