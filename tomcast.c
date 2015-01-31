@@ -1011,6 +1011,7 @@ void spawn_proxy_threads() {
 			RESTREAMER *nr = new_restreamer(c->name, c);
 			if (nr->clientsock < 0) {
 				LOGf("Error creating proxy socket for %s\n", c->name);
+				free_restreamer(nr);
 			} else {
 				list_add(restreamer, nr);
 				if (pthread_create(&nr->thread, NULL, &proxy_ts_stream, nr) == 0) {
