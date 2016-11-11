@@ -9,7 +9,7 @@ LIBS = -lpthread
 FUNCS_DIR = libfuncs
 FUNCS_LIB = $(FUNCS_DIR)/libfuncs.a
 
-tomcast_OBJS =  tomcast.o $(FUNCS_LIB)
+tomcast_OBJS =  tomcast.o web_pages.o web_server.o $(FUNCS_LIB)
 
 all: tomcast
 
