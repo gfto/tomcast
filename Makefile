@@ -1,7 +1,10 @@
 CC = cc
 STRIP = strip
 CROSS := $(TARGET)
-CFLAGS = -ggdb -Wall -Wextra -Wshadow -Wformat-security -Wno-strict-aliasing -O2
+CFLAGS := -O2 -ggdb -pipe \
+ -W -Wall -Wextra \
+ -Wshadow -Wformat-security -Wstrict-prototypes \
+ -Wredundant-decls -Wold-style-definition
 RM = /bin/rm -f
 Q = @
 

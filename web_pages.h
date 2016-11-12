@@ -19,6 +19,9 @@
 #define WEB_PAGES_H
 
 void cmd_index(int clientsock);
+void cmd_status(int clientsock);
+void cmd_getconfig(int clientsock);
 void cmd_reconnect(int clientsock);
+void cmd_reload(int clientsock);
 
 #endif

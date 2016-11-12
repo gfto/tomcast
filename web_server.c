@@ -128,8 +128,14 @@ void *process_web_request(void *in_req) {
 
 	if (strlen(path) == 0) {
 		cmd_index(clientsock);
+	} else if (strstr(path,"getconfig")==path) {
+		cmd_getconfig(clientsock);
 	} else if (strstr(path,"reconnect")==path) {
 		cmd_reconnect(clientsock);
+	} else if (strstr(path,"reload")==path) {
+		cmd_reload(clientsock);
+	} else if (strstr(path,"status")==path) {
+		cmd_status(clientsock);
 	} else {
 		send_404_not_found(clientsock);
 	}
