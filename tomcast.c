@@ -31,6 +31,9 @@
 #include <netdb.h> // for uint32_t
 
 #include "libfuncs/libfuncs.h"
+#include "config.h"
+
+#include "web_server.h"
 
 #define DNS_RESOLVER_TIMEOUT 5000
 
@@ -68,42 +71,7 @@ char *server_sig = "tomcast";
 char *server_ver = "1.15";
 char *copyright  = "Copyright (C) 2010-2013 Unix Solutions Ltd.";
 
-typedef enum { udp_sock, tcp_sock } channel_source;
-
-typedef struct {
-	channel_source sproto;
-	char *proto;
-	char *host;
-	char *path;
-	unsigned int port;
-} CHANSRC;
-
-#define MAX_CHANNEL_SOURCES 8
-
-typedef struct {
-	char *name;
-	char *source; /* Full source url */
-	char *sources[MAX_CHANNEL_SOURCES];
-	uint8_t num_src;
-	uint8_t curr_src;
-	char *dest_host;
-	int dest_port;
-} CHANNEL;
-
-typedef struct {
-	char  *name;
-	CHANNEL *channel;
-	int sock;				/* Server socket */
-	struct sockaddr_in src_sockname;
-	int clientsock;			/* The udp socket */
-	struct sockaddr_in dst_sockname;
-	int reconnect:1,		/* Set to 1 to force proxy reconnect */
-	    connected:1,		/* It's set to 1 when proxy is connected and serving clients */
-	    dienow:1,			/* Stop serving clients and exit now */
-	    freechannel:1;		/* Free channel data on object free (this is used in chanconf) */
-	int cookie;				/* Used in chanconf to determine if the restreamer is alrady checked */
-	pthread_t thread;
-} RESTREAMER;
+static struct config config;
 
 channel_source get_sproto(char *url) {
 	return strncmp(url, "http", 4)==0 ? tcp_sock : udp_sock;
@@ -249,6 +217,11 @@ int connect_multicast(struct sockaddr_in send_to) {
 	return sendsock;
 }
 
+void proxy_set_status(RESTREAMER *r, const char *proxy_status) {
+	pthread_rwlock_wrlock(&r->lock);
+	snprintf(r->status, sizeof(r->status), "%s", proxy_status);
+	pthread_rwlock_unlock(&r->lock);
+}
 
 void connect_destination(RESTREAMER *r) {
 	CHANNEL *c = r->channel;
@@ -275,6 +248,7 @@ RESTREAMER * new_restreamer(const char *name, CHANNEL *channel) {
 	r->channel = channel;
 	r->clientsock = -1;
 	r->dst_sockname = sockname;
+	pthread_rwlock_init(&r->lock, NULL);
 	connect_destination(r);
 	return r;
 }
@@ -288,26 +262,9 @@ void free_restreamer(RESTREAMER *r) {
 	FREE(r);
 }
 
-
-
-
-char *pidfile = NULL;
-char *ident = NULL;
-char *logident = NULL;
-char *loghost = NULL;
-int logport = 514;
-
-char *channels_file = NULL;
-int syslog_active = 0;
-
 char TS_NULL_FRAME[FRAME_PACKET_SIZE];
 
 regex_t http_response;
-
-LIST *chanconf = NULL;
-LIST *restreamer = NULL;
-
-static pthread_mutex_t channels_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void proxy_log(RESTREAMER *r, char *msg, char *info) {
 	LOGf("%s: %sChan: %s Src: %s Dst: udp://%s:%d SrcIP: %s SrcFD: %i DstFD: %i\n",
@@ -323,17 +280,17 @@ void proxy_log(RESTREAMER *r, char *msg, char *info) {
 	);
 }
 
-int load_channels_config() {
+int load_channels_config(struct config *cfg) {
 	regex_t re;
 	regmatch_t res[5];
 	char line[1024];
 	int fd;
 	int num_channels = 0;
 
-	if (pthread_mutex_trylock(&channels_lock) != 0)
+	if (pthread_mutex_trylock(&cfg->channels_lock) != 0)
 		return -1;
 
-	fd = open(channels_file, O_RDONLY);
+	fd = open(cfg->channels_file, O_RDONLY);
 
 	if (fd != -1) {
 		struct timeval tv;
@@ -385,18 +342,18 @@ report_error:
 		regfree(&re);
 		shutdown_fd(&fd);
 		/* Save current chanconf */
-		old_chanconf = chanconf;
+		old_chanconf = cfg->chanconf;
 		/* Switch chanconf */
-		chanconf = new_chanconf;
+		cfg->chanconf = new_chanconf;
 		/* Rewrite restreamer channels */
 		LNODE *lc, *lr, *lctmp, *lrtmp;
 		CHANNEL *chan;
-		list_lock(restreamer);	// Unlocked after second list_for_each(restreamer)
+		list_lock(cfg->restreamer);	// Unlocked after second list_for_each(restreamer)
 
-		list_lock(chanconf);
-		list_for_each(chanconf, lc, lctmp) {
+		list_lock(cfg->chanconf);
+		list_for_each(cfg->chanconf, lc, lctmp) {
 			chan = lc->data;
-			list_for_each(restreamer, lr, lrtmp) {
+			list_for_each(cfg->restreamer, lr, lrtmp) {
 				if (strcmp(chan->name, ((RESTREAMER *)lr->data)->name)==0) {
 					RESTREAMER *restr = lr->data;
 					/* Mark the restreamer as valid */
@@ -425,10 +382,10 @@ report_error:
 				}
 			}
 		}
-		list_unlock(chanconf);
+		list_unlock(cfg->chanconf);
 
 		/* Kill restreamers that serve channels that no longer exist */
-		list_for_each(restreamer, lr, lrtmp) {
+		list_for_each(cfg->restreamer, lr, lrtmp) {
 			RESTREAMER *r = lr->data;
 			/* This restreamer should no longer serve clients */
 			if (r->cookie != cookie) {
@@ -439,14 +396,14 @@ report_error:
 				r->dienow = 1;
 			}
 		}
-		list_unlock(restreamer);
+		list_unlock(cfg->restreamer);
 
 		/* Free old_chanconf */
 		list_free(&old_chanconf, free_channel_p, NULL);
 	} else {
 		num_channels = -1;
 	}
-	pthread_mutex_unlock(&channels_lock);
+	pthread_mutex_unlock(&cfg->channels_lock);
 	if (num_channels == -1)
 		LOGf("CONF : Error loading channels!\n");
 	else
@@ -457,7 +414,7 @@ report_error:
 void proxy_close(RESTREAMER *r) {
 	proxy_log(r, "STOP ","");
 	// If there are no clients left, no "Timeout" messages will be logged
-	list_del_entry(restreamer, r);
+	list_del_entry(config.restreamer, r);
 	free_restreamer(r);
 }
 
@@ -501,10 +458,14 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 	int active = 1;
 	int dret = async_resolve_host(src->host, src->port, &(r->src_sockname), DNS_RESOLVER_TIMEOUT, &active);
 	if (dret != 0) {
-		if (dret == 1)
+		if (dret == 1) {
 			proxy_log(r, "ERR  ","Can't resolve src host");
-		if (dret == 2)
+			proxy_set_status(r, "ERROR: Can not resolve source host");
+		}
+		if (dret == 2) {
 			proxy_log(r, "ERR  ","Timeout resolving src host");
+			proxy_set_status(r, "ERROR: Dns resolve timeout");
+		}
 		DO_RECONNECT;
 	}
 
@@ -519,11 +480,12 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 		proxy_log(r, "NEW  ","");
 		if (do_connect(r->sock, (struct sockaddr *)&(r->src_sockname), sizeof(r->src_sockname), PROXY_CONNECT_TIMEOUT) < 0) {
 			LOGf("ERR  : Error connecting to %s srv_fd: %i err: %s\n", r->channel->source, r->sock, strerror(errno));
+			proxy_set_status(r, "ERROR: Can not connect to source");
 			DO_RECONNECT;
 		}
 
 		snprintf(buf,sizeof(buf)-1, "GET /%s HTTP/1.0\r\nHost: %s:%u\r\nX-Smart-Client: yes\r\nUser-Agent: %s %s (%s)\r\n\r\n",
-		         src->path, src->host, src->port, server_sig, server_ver, ident);
+		         src->path, src->host, src->port, server_sig, server_ver, config.ident);
 		buf[sizeof(buf)-1] = 0;
 		fdwrite(r->sock, buf, strlen(buf));
 
@@ -556,14 +518,17 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 		}
 		if (*http_code == 0) { // No valid HTTP response, retry
 			LOGf("DEBUG: Server returned not valid HTTP code | srv_fd: %i\n", r->sock);
+			proxy_set_status(r, "ERROR: Source returned invalid HTTP code");
 			DO_RECONNECT;
 		}
 		if (*http_code == 504) { // No signal, exit
 			LOGf("ERR  : Get no-signal for %s from %s on srv_fd: %i\n", r->channel->name, r->channel->source, r->sock);
+			proxy_set_status(r, "ERROR: Source returned no-signal");
 			FATAL_ERROR;
 		}
 		if (*http_code > 300) { // Unhandled or error codes, exit
 			LOGf("ERR  : Get code %i for %s from %s on srv_fd: %i exiting.\n", *http_code, r->channel->name, r->channel->source, r->sock);
+			proxy_set_status(r, "ERROR: Source returned unhandled error code");
 			FATAL_ERROR;
 		}
 		// connected ok, continue
@@ -604,6 +569,7 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 	if (setsockopt(r->sock, SOL_SOCKET, SO_RCVBUF, (const char *)&readbuflen, sizeof(readbuflen)) < 0)
 		log_perror("play(): setsockopt(SO_RCVBUF)", errno);
 
+	proxy_set_status(r, "Connected");
 	r->connected = 1;
 
 	free_chansrc(src);
@@ -613,10 +579,12 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 int check_restreamer_state(RESTREAMER *r) {
 	if (r->dienow) {
 		// LOGf("PROXY: Forced disconnect on srv_fd: %i | Channel: %s Source: %s\n", r->sock, r->channel->name, r->channel->source);
+		proxy_set_status(r, "Dying");
 		return 2;
 	}
 	if (r->reconnect) {
 		LOGf("PROXY: Forced reconnect on srv_fd: %i | Channel: %s Source: %s\n", r->sock, r->channel->name, r->channel->source);
+		proxy_set_status(r, "Forced reconnect");
 		return 1;
 	}
 	return 0;
@@ -640,7 +608,7 @@ int check_restreamer_state(RESTREAMER *r) {
 		0 = synced ok
 		1 = not synced, reconnect
 */
-int mpeg_sync(int proxysock, char *channel, channel_source source_proto) {
+int mpeg_sync(RESTREAMER *r, int proxysock, char *channel, channel_source source_proto) {
 	time_t sync_start = time(NULL);
 	unsigned int sync_packets = 0;
 	unsigned int read_bytes = 0;
@@ -656,6 +624,7 @@ int mpeg_sync(int proxysock, char *channel, channel_source source_proto) {
 resync:
 		if (fdread_ex(proxysock, syncframe, 1, _timeout, _retries, 1) != 1) {
 			LOGf("DEBUG: mpeg_sync fdread() timeout | Channel: %s\n", channel);
+			proxy_set_status(r, "ERROR: fdread() timeout while syncing mpeg");
 			return 1; // reconnect
 		}
 		// LOGf("DEBUG:     Read 0x%02x Offset %u Sync: %u\n", (uint8_t)syncframe[0], read_bytes, sync_packets);
@@ -664,6 +633,7 @@ resync:
 			ssize_t rdsz = fdread_ex(proxysock, syncframe, 188-1, _timeout, _retries, 1);
 			if (rdsz != 188-1) {
 				LOGf("DEBUG: mpeg_sync fdread() timeout | Channel: %s\n", channel);
+				proxy_set_status(r, "ERROR: fdread() timeout while syncing mpeg");
 				return 1; // reconnect
 			}
 			read_bytes += 188-1;
@@ -675,14 +645,21 @@ resync:
 		}
 		if (read_bytes > FRAME_PACKET_SIZE) { // Can't sync in 1316 bytes
 			LOGf("DEBUG: Can't sync after %d bytes | Channel: %s\n", FRAME_PACKET_SIZE, channel);
+			proxy_set_status(r, "ERROR: Can not sync mpeg");
 			return 1; // reconnect
 		}
 		if (sync_start+2 <= time(NULL)) { // Do not sync in two seconds
 			LOGf("DEBUG: Timeout while syncing (read %u bytes) | Channel: %s\n", read_bytes, channel);
+			proxy_set_status(r, "ERROR: Timeout while syncing mpeg");
 			return 1; // reconnect
 		}
 	} while (1);
+	pthread_rwlock_wrlock(&r->lock);
+	r->conn_ts = time(NULL);
+	r->read_bytes = read_bytes;
+	pthread_rwlock_unlock(&r->lock);
 	LOGf("SYNC : TS synced after %u bytes | Channel: %s\n", read_bytes-FRAME_PACKET_SIZE, channel);
+	proxy_set_status(r, "Working");
 	return 0;
 }
 
@@ -807,13 +784,16 @@ void * proxy_ts_stream(void *self) {
 
 	int http_code = 0;
 	while (1) {
+		r->conn_ts = 0;
+		r->read_bytes = 0;
+
 		int result = connect_source(self, 1, FRAME_PACKET_SIZE * 1000, &http_code);
 		if (result > 0)
 			goto RECONNECT;
 
 		channel_source sproto = get_sproto(r->channel->source);
 
-		int mpgsync = mpeg_sync(r->sock, r->channel->name, sproto);
+		int mpgsync = mpeg_sync(r, r->sock, r->channel->name, sproto);
 		if (mpgsync == 1) // Timeout
 			goto RECONNECT;
 
@@ -836,6 +816,7 @@ void * proxy_ts_stream(void *self) {
 				LOGf("PROXY: zero read on srv_fd: %i | Channel: %s Source: %s\n", r->sock, r->channel->name, r->channel->source);
 				if (--max_zero_reads == 0) {
 					LOGf("PROXY: %d zero reads on srv_fd: %i | Channel: %s Source: %s\n", MAX_ZERO_READS, r->sock, r->channel->name, r->channel->source);
+					proxy_set_status(r, "ERROR: Too many zero reads");
 					break;
 				}
 				continue;
@@ -848,6 +829,9 @@ void * proxy_ts_stream(void *self) {
 				//LOGf("DEBUG: Short read (%d) on retreamer srv_fd: %i | Channel: %s\n", readen, sock, chan->name);
 				memcpy(buf+readen, TS_NULL_FRAME+readen, FRAME_PACKET_SIZE - readen);
 			}
+			pthread_rwlock_wrlock(&r->lock);
+			r->read_bytes += readen;
+			pthread_rwlock_unlock(&r->lock);
 
 			if (send_reset) {
 				send_reset = 0;
@@ -860,8 +844,13 @@ void * proxy_ts_stream(void *self) {
 			}
 		}
 		LOGf("DEBUG: fdread timeout restreamer srv_fd: %i | Channel: %s\n", r->sock, r->channel->name);
+		proxy_set_status(r, "ERROR: Read timeout");
 RECONNECT:
+		pthread_rwlock_wrlock(&r->lock);
+		r->conn_ts = 0;
+		pthread_rwlock_unlock(&r->lock);
 		LOGf("DEBUG: reconnect srv_fd: %i | Channel: %s\n", r->sock, r->channel->name);
+		proxy_set_status(r, "Reconnecting");
 		shutdown_fd(&(r->sock));
 		next_channel_source(r->channel);
 		continue;
@@ -893,13 +882,16 @@ void show_usage(int ident_only) {
 	puts("\t-l host\t\tSyslog host (default: disabled)");
 	puts("\t-L port\t\tSyslog port (default: 514)");
 	puts("\t-R\t\tSend reset packets when changing sources.");
+	puts("Server settings:");
+	puts("\t-b addr\t\tLocal IP address to bind.   (default: 0.0.0.0)");
+	puts("\t-p port\t\tPort to listen.             (default: 0)");
 	puts("");
 }
 
-void set_ident(char *new_ident) {
-	ident = new_ident;
-	logident = strdup(ident);
-	char *c = logident;
+void set_ident(char *new_ident, struct config *cfg) {
+	cfg->ident = new_ident;
+	cfg->logident = strdup(new_ident);
+	char *c = cfg->logident;
 	while (*c) {
 		if (*c=='/')
 			*c='-';
@@ -907,18 +899,26 @@ void set_ident(char *new_ident) {
 	}
 }
 
-void parse_options(int argc, char **argv) {
+void parse_options(int argc, char **argv, struct config *cfg) {
 	int j, ttl;
-	while ((j = getopt(argc, argv, "i:c:d:t:o:l:L:RHh")) != -1) {
+	cfg->server_socket = -1;
+	pthread_mutex_init(&cfg->channels_lock, NULL);
+	while ((j = getopt(argc, argv, "i:b:p:c:d:t:o:l:L:RHh")) != -1) {
 		switch (j) {
+			case 'b':
+				cfg->server_addr = optarg;
+				break;
+			case 'p':
+				cfg->server_port = atoi(optarg);
+				break;
 			case 'i':
-				set_ident(optarg);
+				set_ident(optarg, cfg);
 				break;
 			case 'c':
-				channels_file = optarg;
+				cfg->channels_file = optarg;
 				break;
 			case 'd':
-				pidfile = optarg;
+				cfg->pidfile = optarg;
 				break;
 			case 'o':
 				if (inet_aton(optarg, &output_intf) == 0) {
@@ -931,11 +931,11 @@ void parse_options(int argc, char **argv) {
 				multicast_ttl = (ttl && ttl < 127) ? ttl : 1;
 				break;
 			case 'l':
-				loghost = optarg;
-				syslog_active = 1;
+				cfg->loghost = optarg;
+				cfg->syslog_active = 1;
 				break;
 			case 'L':
-				logport = atoi(optarg);
+				cfg->logport = atoi(optarg);
 				break;
 			case 'R':
 				send_reset_opt = 1;
@@ -948,38 +948,44 @@ void parse_options(int argc, char **argv) {
 		}
 	}
 
-	if (!channels_file) {
+	if (!cfg->channels_file) {
 		show_usage(0);
 		fprintf(stderr, "ERROR: No channels file is set (use -c option).\n");
 		exit(1);
 	}
 
-	if (!ident) {
-		set_ident("unixsol/tomcast");
+	if (!cfg->ident) {
+		set_ident("unixsol/tomcast", cfg);
 	}
 
 	printf("Configuration:\n");
-	printf("\tServer ident      : %s\n", ident);
-	printf("\tChannels file     : %s\n", channels_file);
+	printf("\tServer ident      : %s\n", cfg->ident);
+	printf("\tChannels file     : %s\n", cfg->channels_file);
 	printf("\tOutput iface addr : %s\n", inet_ntoa(output_intf));
 	printf("\tMulticast ttl     : %d\n", multicast_ttl);
-	if (syslog_active) {
-		printf("\tSyslog host       : %s\n", loghost);
-		printf("\tSyslog port       : %d\n", logport);
+	if (cfg->syslog_active) {
+		printf("\tSyslog host       : %s\n", cfg->loghost);
+		printf("\tSyslog port       : %d\n", cfg->logport);
 	} else {
 		printf("\tSyslog disabled.\n");
 	}
 	if (send_reset_opt)
 		printf("\tSend reset packets.\n");
-	if (pidfile) {
-		printf("\tDaemonize         : %s\n", pidfile);
+	if (cfg->pidfile) {
+		printf("\tDaemonize         : %s\n", cfg->pidfile);
 	} else {
 		printf("\tDo not daemonize.\n");
 	}
+	if (cfg->server_port) {
+		init_server_socket(cfg->server_addr, cfg->server_port, &cfg->server, &cfg->server_socket);
+		printf("\tStarting web srv  : http://%s:%d/status (sock: %d)\n", cfg->server_addr, cfg->server_port, cfg->server_socket);
+	} else {
+		printf("\tNo web server\n");
+	}
 }
 
-void init_vars() {
-	restreamer = list_new("restreamer");
+void init_vars(struct config *cfg) {
+	cfg->restreamer = list_new("restreamer");
 	regcomp(&http_response, "^HTTP/1.[0-1] (([0-9]{3}) .*)", REG_EXTENDED);
 	memset(&TS_NULL_FRAME, 0xff, FRAME_PACKET_SIZE);
 	int i;
@@ -991,29 +997,29 @@ void init_vars() {
 	}
 }
 
-void spawn_proxy_threads() {
+void spawn_proxy_threads(struct config *cfg) {
 	LNODE *lc, *lctmp;
 	LNODE *lr, *lrtmp;
 	int spawned = 0;
-	list_for_each(chanconf, lc, lctmp) {
+	list_for_each(cfg->chanconf, lc, lctmp) {
 		CHANNEL *c = lc->data;
 		int restreamer_active = 0;
-		list_lock(restreamer);
-		list_for_each(restreamer, lr, lrtmp) {
+		list_lock(cfg->restreamer);
+		list_for_each(cfg->restreamer, lr, lrtmp) {
 			RESTREAMER *r = lr->data;
 			if (strcmp(r->name, c->name)==0) {
 				restreamer_active = 1;
 				break;
 			}
 		}
-		list_unlock(restreamer);
+		list_unlock(cfg->restreamer);
 		if (!restreamer_active) {
 			RESTREAMER *nr = new_restreamer(c->name, c);
 			if (nr->clientsock < 0) {
 				LOGf("Error creating proxy socket for %s\n", c->name);
 				free_restreamer(nr);
 			} else {
-				list_add(restreamer, nr);
+				list_add(cfg->restreamer, nr);
 				if (pthread_create(&nr->thread, NULL, &proxy_ts_stream, nr) == 0) {
 					spawned++;
 					pthread_detach(nr->thread);
@@ -1026,44 +1032,51 @@ void spawn_proxy_threads() {
 	LOGf("INFO : %d proxy threads spawned\n", spawned);
 }
 
-void kill_proxy_threads() {
+void kill_proxy_threads(struct config *cfg) {
 	LNODE *l, *tmp;
 	int killed = 0;
-	list_lock(restreamer);
-	list_for_each(restreamer, l, tmp) {
+	list_lock(cfg->restreamer);
+	list_for_each(cfg->restreamer, l, tmp) {
 		RESTREAMER *r = l->data;
 		r->dienow = 1;
 		killed++;
 	}
-	list_unlock(restreamer);
+	list_unlock(cfg->restreamer);
 	LOGf("INFO : %d proxy threads killed\n", killed);
 }
 
+int keep_going = 1;
+
 void signal_quit(int sig) {
-	kill_proxy_threads();
+	keep_going = 0;
+	kill_proxy_threads(&config);
 	usleep(500000);
-	LOGf("KILL : Signal %i | %s %s (%s)\n", sig, server_sig, server_ver, ident);
+	LOGf("KILL : Signal %i | %s %s (%s)\n", sig, server_sig, server_ver, config.ident);
 	usleep(100000);
 	log_close();
-	if (pidfile && strlen(pidfile))
-		unlink(pidfile);
+	if (config.pidfile && strlen(config.pidfile))
+		unlink(config.pidfile);
 	signal(sig, SIG_DFL);
 	raise(sig);
 }
 
+struct config *get_config(void) {
+	return &config;
+}
+
 void do_reconnect() {
 	LNODE *l, *tmp;
-	list_lock(restreamer);
-	list_for_each(restreamer, l, tmp) {
+	list_lock(config.restreamer);
+	list_for_each(config.restreamer, l, tmp) {
 		RESTREAMER *r = l->data;
 		r->reconnect = 1;
 	}
-	list_unlock(restreamer);
+	list_unlock(config.restreamer);
 }
 
 void do_reconf() {
-	load_channels_config();
-	spawn_proxy_threads();
+	load_channels_config(&config);
+	spawn_proxy_threads(&config);
 }
 
 void init_signals() {
@@ -1077,13 +1090,13 @@ void init_signals() {
 	signal(SIGTERM, signal_quit);
 }
 
-void do_daemonize() {
-	if (!pidfile)
+void do_daemonize(struct config *cfg) {
+	if (!cfg->pidfile)
 		return;
 	fprintf(stderr, "Daemonizing.\n");
 	pid_t pid = fork();
 	if (pid > 0) {
-		FILE *F = fopen(pidfile,"w");
+		FILE *F = fopen(cfg->pidfile,"w");
 		if (F) {
 			fprintf(F,"%i\n",pid);
 			fclose(F);
@@ -1098,25 +1111,26 @@ void do_daemonize() {
 }
 
 /* Must be called after daemonize! */
-void init_logger() {
-	if (syslog_active)
-		fprintf(stderr, "Logging to %s:%d\n", loghost, logport);
-	log_init(logident, syslog_active, pidfile == NULL, loghost, logport);
+void init_logger(struct config *cfg) {
+	if (cfg->syslog_active)
+		fprintf(stderr, "Logging to %s:%d\n", cfg->loghost, cfg->logport);
+	log_init(cfg->logident, cfg->syslog_active, cfg->pidfile == NULL, cfg->loghost, cfg->logport);
 }
 
 int main(int argc, char **argv) {
 	set_http_response_server_ident(server_sig, server_ver);
 	show_usage(1); // Show copyright and version
-	init_vars();
-	parse_options(argc, argv);
-	do_daemonize();
-	init_logger();
+	init_vars(&config);
+	parse_options(argc, argv, &config);
+	do_daemonize(&config);
+	init_logger(&config);
 	init_signals();
 
-	LOGf("INIT : %s %s (%s)\n" , server_sig, server_ver, ident);
+	LOGf("INIT : %s %s (%s)\n" , server_sig, server_ver, config.ident);
 
-	load_channels_config();
-	spawn_proxy_threads();
+	load_channels_config(&config);
+	spawn_proxy_threads(&config);
+	web_server_start(&config);
 
 	do {
 		sleep(60);
