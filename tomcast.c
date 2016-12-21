@@ -68,8 +68,8 @@
 #endif
 
 char *server_sig = "tomcast";
-char *server_ver = "1.15";
-char *copyright  = "Copyright (C) 2010-2013 Unix Solutions Ltd.";
+char *server_ver = "1.30";
+char *copyright  = "Copyright (C) 2010-2016 Unix Solutions Ltd.";
 
 static struct config config;
 
