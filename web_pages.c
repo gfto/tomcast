@@ -116,12 +116,12 @@ void cmd_reconnect(int clientsock) {
 	pthread_mutex_lock(&cfg->channels_lock);
 	fdputsf(clientsock, "\nReconnecting %d inputs.\n", cfg->chanconf->items);
 	pthread_mutex_unlock(&cfg->channels_lock);
-	do_reconnect();
+	do_reconnect(1);
 }
 
 void cmd_reload(int clientsock) {
 	send_200_ok(clientsock);
 	send_header_textplain(clientsock);
 	fdputs(clientsock, "\nReloading config\n");
-	do_reconf();
+	do_reconf(1);
 }

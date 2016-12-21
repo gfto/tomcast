@@ -89,8 +89,8 @@ struct config {
 	pthread_mutex_t		channels_lock;
 };
 
-extern void do_reconnect();
-extern void do_reconf();
+extern void do_reconnect(int sig);
+extern void do_reconf(int sig);
 extern struct config *get_config(void);
 
 #endif

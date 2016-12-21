@@ -1065,7 +1065,8 @@ struct config *get_config(void) {
 	return &config;
 }
 
-void do_reconnect() {
+void do_reconnect(int sig) {
+	(void)sig;
 	LNODE *l, *tmp;
 	list_lock(config.restreamer);
 	list_for_each(config.restreamer, l, tmp) {
@@ -1075,12 +1076,13 @@ void do_reconnect() {
 	list_unlock(config.restreamer);
 }
 
-void do_reconf() {
+void do_reconf(int sig) {
+	(void)sig;
 	load_channels_config(&config);
 	spawn_proxy_threads(&config);
 }
 
-void init_signals() {
+void init_signals(void) {
 	signal(SIGCHLD, SIG_IGN);
 	signal(SIGPIPE, SIG_IGN);
 
