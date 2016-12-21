@@ -978,7 +978,8 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 	}
 	if (cfg->server_port) {
 		init_server_socket(cfg->server_addr, cfg->server_port, &cfg->server, &cfg->server_socket);
-		printf("\tStarting web srv  : http://%s:%d/status (sock: %d)\n", cfg->server_addr, cfg->server_port, cfg->server_socket);
+		printf("\tStarting web srv  : http://%s:%d/status (sock: %d)\n",
+			cfg->server_addr ? cfg->server_addr : "*", cfg->server_port, cfg->server_socket);
 	} else {
 		printf("\tNo web server\n");
 	}
