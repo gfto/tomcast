@@ -872,8 +872,9 @@ void show_usage(int ident_only) {
 	}
 	if (ident_only)
 		return;
-	puts("Usage: tomcast -c config_file");
+	puts("Usage: tomcast [opts] -c config_file");
 	puts("");
+	puts("  Options:");
 	puts("\t-c file\t\tChannels configuration file");
 	puts("\t-i ident\tServer ident. Must be formated as PROVIDER/SERVER");
 	puts("\t-d pidfile\tDaemonize and write daemon pid into pidfile");
@@ -882,9 +883,10 @@ void show_usage(int ident_only) {
 	puts("\t-l host\t\tSyslog host (default: disabled)");
 	puts("\t-L port\t\tSyslog port (default: 514)");
 	puts("\t-R\t\tSend reset packets when changing sources.");
-	puts("Server settings:");
+	puts("");
+	puts("  Web server options:");
 	puts("\t-b addr\t\tLocal IP address to bind.   (default: 0.0.0.0)");
-	puts("\t-p port\t\tPort to listen.             (default: 0)");
+	puts("\t-p port\t\tPort to listen.             (default: disabled)");
 	puts("");
 }
 
