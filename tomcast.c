@@ -904,6 +904,7 @@ void set_ident(char *new_ident, struct config *cfg) {
 void parse_options(int argc, char **argv, struct config *cfg) {
 	int j, ttl;
 	cfg->server_socket = -1;
+	cfg->logport = 514;
 	pthread_mutex_init(&cfg->channels_lock, NULL);
 	while ((j = getopt(argc, argv, "i:b:p:c:d:t:o:l:L:RHh")) != -1) {
 		switch (j) {
