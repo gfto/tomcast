@@ -1,3 +1,6 @@
+vNEXT | xx xxx xxxx
+  * Add support for handling of 301/302 HTTP redirects
+
 v1.30 | 21 Dec 2016
   * Add web access for monitoring and reconfiguration
 

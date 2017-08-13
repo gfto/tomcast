@@ -267,7 +267,7 @@ char TS_NULL_FRAME[FRAME_PACKET_SIZE];
 regex_t http_response;
 
 void proxy_log(RESTREAMER *r, char *msg, char *info) {
-	LOGf("%s: %sChan: %s Src: %s Dst: udp://%s:%d SrcIP: %s SrcFD: %i DstFD: %i\n",
+	LOGf("%s: %s Chan: %s Src: %s Dst: udp://%s:%d SrcIP: %s SrcFD: %i DstFD: %i\n",
 		msg,
 		info,
 		r->channel->name,
@@ -412,7 +412,7 @@ report_error:
 }
 
 void proxy_close(RESTREAMER *r) {
-	proxy_log(r, "STOP ","");
+	proxy_log(r, "STOP ","-");
 	// If there are no clients left, no "Timeout" messages will be logged
 	list_del_entry(config.restreamer, r);
 	free_restreamer(r);
@@ -446,8 +446,12 @@ void proxy_close(RESTREAMER *r) {
 		 1 = retry
 		 0 = connected ok
 */
-int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
-	CHANSRC *src = init_chansrc(r->channel->source);
+int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code, char *url, int depth) {
+	CHANSRC *src = init_chansrc(url);
+	if (depth > 4) {
+		LOGf("ERR  : Redirect loop detected, depth: %d | Channel: %s Source: %s\n", depth, r->channel->name, url);
+		FATAL_ERROR;
+	}
 	if (!src) {
 		LOGf("ERR  : Can't parse channel source | Channel: %s Source: %s\n", r->channel->name, r->channel->source);
 		FATAL_ERROR;
@@ -477,7 +481,11 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 			log_perror("play(): Could not create SOCK_STREAM socket.", errno);
 			FATAL_ERROR;
 		}
-		proxy_log(r, "NEW  ","");
+		if (depth == 0) {
+			proxy_log(r, "NEW  ", "-");
+		} else {
+			proxy_log(r, "NEW  ", url);
+		}
 		if (do_connect(r->sock, (struct sockaddr *)&(r->src_sockname), sizeof(r->src_sockname), PROXY_CONNECT_TIMEOUT) < 0) {
 			LOGf("ERR  : Error connecting to %s srv_fd: %i err: %s\n", r->channel->source, r->sock, strerror(errno));
 			proxy_set_status(r, "ERROR: Can not connect to source");
@@ -489,6 +497,8 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 		buf[sizeof(buf)-1] = 0;
 		fdwrite(r->sock, buf, strlen(buf));
 
+		char redirect_to[1024];
+		memset(redirect_to, 0, sizeof(redirect_to));
 		char xresponse[128];
 		memset(xresponse, 0, sizeof(xresponse));
 		memset(buf, 0, sizeof(buf));
@@ -515,6 +525,20 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 					break;
 				}
 			}
+			if (strstr(buf, "Location: ") == buf) {
+				// Remove new line
+				char *new_line = strchr(buf, '\r');
+				if (new_line) *new_line = '\0';
+				new_line = strchr(buf, '\n');
+				if (new_line) *new_line = '\0';
+				snprintf(redirect_to, sizeof(redirect_to)-1, "%s", buf + 10);
+				if (strstr(redirect_to, "http://") != redirect_to) {
+					// Assume that the redirect is relative, add proto, host and port
+					snprintf(redirect_to, sizeof(redirect_to)-1, "http://%s:%d%s",
+						src->host, src->port, buf + 10);
+					LOGf("DEBUG: Converted relative location to: %s | srv_fd: %i\n", redirect_to, r->sock);
+				}
+			}
 		}
 		if (*http_code == 0) { // No valid HTTP response, retry
 			LOGf("DEBUG: Server returned not valid HTTP code | srv_fd: %i\n", r->sock);
@@ -526,7 +550,15 @@ int connect_source(RESTREAMER *r, int retries, int readbuflen, int *http_code) {
 			proxy_set_status(r, "ERROR: Source returned no-signal");
 			FATAL_ERROR;
 		}
-		if (*http_code > 300) { // Unhandled or error codes, exit
+		if (*http_code == 301 || *http_code == 302) { // Handle redirects
+			if (redirect_to[0]) {
+				LOGf("REDIR: Get code %i for %s from %s on srv_fd: %i, handling redirect to: %s\n", *http_code, r->channel->name, r->channel->source, r->sock, redirect_to);
+				free_chansrc(src);
+				shutdown_fd(&(r->sock));
+				return connect_source(r, retries, readbuflen, http_code, redirect_to, ++depth);
+			}
+			// Redirect connect is OK, continue
+		} else if (*http_code > 300) { // Unhandled or error codes, exit
 			LOGf("ERR  : Get code %i for %s from %s on srv_fd: %i exiting.\n", *http_code, r->channel->name, r->channel->source, r->sock);
 			proxy_set_status(r, "ERROR: Source returned unhandled error code");
 			FATAL_ERROR;
@@ -787,7 +819,7 @@ void * proxy_ts_stream(void *self) {
 		r->conn_ts = 0;
 		r->read_bytes = 0;
 
-		int result = connect_source(self, 1, FRAME_PACKET_SIZE * 1000, &http_code);
+		int result = connect_source(self, 1, FRAME_PACKET_SIZE * 1000, &http_code, r->channel->source, 0);
 		if (result > 0)
 			goto RECONNECT;
 
