@@ -81,7 +81,7 @@ struct config {
 	int					server_port;
 	int					server_socket;
 	pthread_t			server_thread;
-	bool				allow_encrypted_input;
+	int					allow_encrypted_input;
 
 	char				*channels_file;
 
