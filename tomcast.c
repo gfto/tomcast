@@ -13,6 +13,7 @@
  *
  */
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -31,6 +32,7 @@
 #include <netdb.h> // for uint32_t
 
 #include "libfuncs/libfuncs.h"
+#include "bitstream.h"
 #include "config.h"
 
 #include "web_server.h"
@@ -68,10 +70,33 @@
 #endif
 
 char *server_sig = "tomcast";
-char *server_ver = "1.30";
-char *copyright  = "Copyright (C) 2010-2016 Unix Solutions Ltd.";
+char *server_ver = "1.34";
+char *copyright  = "Copyright (C) 2010-2018 Unix Solutions Ltd.";
 
 static struct config config;
+
+#ifdef __MACH__
+#include <mach/clock.h>
+#include <mach/mach.h>
+#endif
+
+int64_t get_time(void) {
+	struct timespec ts;
+#ifdef __MACH__
+// OS X does not have clock_gettime, use clock_get_time
+	clock_serv_t cclock;
+	mach_timespec_t mts;
+	host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+	clock_get_time(cclock, &mts);
+	mach_port_deallocate(mach_task_self(), cclock);
+	ts.tv_sec = mts.tv_sec;
+	ts.tv_nsec = mts.tv_nsec;
+#else
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) == EINVAL) // Shouldn't happen on modern Linux
+		clock_gettime(CLOCK_REALTIME, &ts);
+#endif
+	return ts.tv_sec * 1000000ll + ts.tv_nsec / 1000;
+}
 
 channel_source get_sproto(char *url) {
 	return strncmp(url, "http", 4)==0 ? tcp_sock : udp_sock;
@@ -250,6 +275,7 @@ RESTREAMER * new_restreamer(const char *name, CHANNEL *channel) {
 	r->dst_sockname = sockname;
 	pthread_rwlock_init(&r->lock, NULL);
 	connect_destination(r);
+	r->last_decrypted_input_ts = get_time();
 	return r;
 }
 
@@ -808,6 +834,39 @@ char reset[FRAME_PACKET_SIZE] = {
   0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
 };
 
+
+/*
+	Return value:
+		ret        == 0    - No valid payload was found
+		ret & 0x01 == 0x01 - PES was found
+		ret & 0x02 == 0x02 - PTS was found
+		ret & 0x04 == 0x04 - DTS was found
+*/
+static unsigned int ts_have_valid_pes(uint8_t *buf, unsigned int buffer_size) {
+	unsigned int ret = 0;
+	uint8_t *buf_end = buf + buffer_size;
+	while (buf < buf_end && ts_validate(buf)) {
+		uint16_t header_size = TS_HEADER_SIZE + (ts_has_adaptation(buf) ? 1 : 0) + ts_get_adaptation(buf);
+		if (ts_get_unitstart(buf) && ts_has_payload(buf) && header_size + PES_HEADER_SIZE_PTS <= TS_SIZE) {
+			//printf("Got payload\n");
+			if (pes_validate(buf + header_size) && pes_get_streamid(buf + header_size) != PES_STREAM_ID_PRIVATE_2 && pes_validate_header(buf + header_size)) {
+				//printf("Got PES\n");
+				ret |= 0x01;
+				if (pes_has_pts(buf + header_size) && pes_validate_pts(buf + header_size)) {
+					ret |= 0x02;
+					//printf("Got PTS\n");
+					if (header_size + PES_HEADER_SIZE_PTSDTS <= TS_SIZE && pes_has_dts(buf + header_size) && pes_validate_dts(buf + header_size)) {
+						//printf("Got DTS\n");
+						ret |= 0x04;
+					}
+				}
+			}
+		}
+		buf += TS_SIZE;
+	}
+	return ret;
+}
+
 void * proxy_ts_stream(void *self) {
 	RESTREAMER *r = self;
 	char buf[FRAME_PACKET_SIZE];
@@ -868,6 +927,19 @@ void * proxy_ts_stream(void *self) {
 			if (send_reset) {
 				send_reset = 0;
 				fdwrite(r->clientsock, reset, FRAME_PACKET_SIZE);
+			}
+
+			int64_t now = get_time();
+			int ret;
+			if ((ret = ts_have_valid_pes((uint8_t *)buf, readen)) == 0) { // Is the output encrypted?
+				/* The output is encrypted, check if 1000 ms have passed and if such, notify that we probably have invalid key */
+				if (now > r->last_decrypted_input_ts + 500000) {
+					proxy_log(r, "ERR  ","Scrambled input");
+					proxy_set_status(r, "ERROR: Encrypted stream input");
+					goto RECONNECT;
+				}
+			} else {
+				r->last_decrypted_input_ts = now;
 			}
 			written = fdwrite(r->clientsock, buf, FRAME_PACKET_SIZE);
 			if (written == -1) {

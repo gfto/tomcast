@@ -62,6 +62,7 @@ typedef struct {
 	pthread_rwlock_t lock;
 	time_t conn_ts;
 	uint64_t read_bytes;
+	int64_t last_decrypted_input_ts;
 	char status[64];
 } RESTREAMER;
 
