@@ -70,7 +70,7 @@
 #endif
 
 char *server_sig = "tomcast";
-char *server_ver = "1.34";
+char *server_ver = "1.40";
 char *copyright  = "Copyright (C) 2010-2018 Unix Solutions Ltd.";
 
 static struct config config;
@@ -929,18 +929,21 @@ void * proxy_ts_stream(void *self) {
 				fdwrite(r->clientsock, reset, FRAME_PACKET_SIZE);
 			}
 
-			int64_t now = get_time();
-			int ret;
-			if ((ret = ts_have_valid_pes((uint8_t *)buf, readen)) == 0) { // Is the output encrypted?
-				/* The output is encrypted, check if 1000 ms have passed and if such, notify that we probably have invalid key */
-				if (now > r->last_decrypted_input_ts + 500000) {
-					proxy_log(r, "ERR  ","Scrambled input");
-					proxy_set_status(r, "ERROR: Encrypted stream input");
-					goto RECONNECT;
+			if (!config.allow_encrypted_input) {
+				int64_t now = get_time();
+				int ret;
+				if ((ret = ts_have_valid_pes((uint8_t *)buf, readen)) == 0) { // Is the output encrypted?
+					/* The output is encrypted, check if 1000 ms have passed and if such, notify that we probably have invalid key */
+					if (now > r->last_decrypted_input_ts + 500000) {
+						proxy_log(r, "ERR  ","Scrambled input");
+						proxy_set_status(r, "ERROR: Encrypted stream input");
+						goto RECONNECT;
+					}
+				} else {
+					r->last_decrypted_input_ts = now;
 				}
-			} else {
-				r->last_decrypted_input_ts = now;
 			}
+
 			written = fdwrite(r->clientsock, buf, FRAME_PACKET_SIZE);
 			if (written == -1) {
 				LOGf("PROXY: Error writing to dst_fd: %i on srv_fd: %i | Channel: %s Source: %s\n", r->clientsock, r->sock, r->channel->name, r->channel->source);
@@ -987,6 +990,7 @@ void show_usage(int ident_only) {
 	puts("\t-l host\t\tSyslog host (default: disabled)");
 	puts("\t-L port\t\tSyslog port (default: 514)");
 	puts("\t-R\t\tSend reset packets when changing sources.");
+	puts("\t-E\t\tDetect encrypted input (default: false)");
 	puts("");
 	puts("  Web server options:");
 	puts("\t-b addr\t\tLocal IP address to bind.   (default: 0.0.0.0)");
@@ -1010,7 +1014,7 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 	cfg->server_socket = -1;
 	cfg->logport = 514;
 	pthread_mutex_init(&cfg->channels_lock, NULL);
-	while ((j = getopt(argc, argv, "i:b:p:c:d:t:o:l:L:RHh")) != -1) {
+	while ((j = getopt(argc, argv, "i:b:p:c:d:t:o:l:L:REHh")) != -1) {
 		switch (j) {
 			case 'b':
 				cfg->server_addr = optarg;
@@ -1047,6 +1051,9 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 			case 'R':
 				send_reset_opt = 1;
 				break;
+			case 'E':
+				cfg->allow_encrypted_input = 1;
+				break;
 			case 'H':
 			case 'h':
 				show_usage(0);
@@ -1078,6 +1085,8 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 	}
 	if (send_reset_opt)
 		printf("\tSend reset packets.\n");
+	if (cfg->allow_encrypted_input)
+		printf("\tDetect encrypted input.\n");
 	if (cfg->pidfile) {
 		printf("\tDaemonize         : %s\n", cfg->pidfile);
 	} else {

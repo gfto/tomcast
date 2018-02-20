@@ -1,5 +1,7 @@
 vNEXT | xx xxx xxxx
   * Add support for handling of 301/302 HTTP redirects
+  * Add support for detecting encrypted input and switching sources
+    if the input is encrypted (use -E option).
 
 v1.30 | 21 Dec 2016
   * Add web access for monitoring and reconfiguration
