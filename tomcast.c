@@ -929,7 +929,7 @@ void * proxy_ts_stream(void *self) {
 				fdwrite(r->clientsock, reset, FRAME_PACKET_SIZE);
 			}
 
-			if (!config.allow_encrypted_input) {
+			if (config.detect_encrypted_input) {
 				int64_t now = get_time();
 				int ret;
 				if ((ret = ts_have_valid_pes((uint8_t *)buf, readen)) == 0) { // Is the output encrypted?
@@ -1052,7 +1052,7 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 				send_reset_opt = 1;
 				break;
 			case 'E':
-				cfg->allow_encrypted_input = 1;
+				cfg->detect_encrypted_input = 1;
 				break;
 			case 'H':
 			case 'h':
@@ -1085,7 +1085,7 @@ void parse_options(int argc, char **argv, struct config *cfg) {
 	}
 	if (send_reset_opt)
 		printf("\tSend reset packets.\n");
-	if (cfg->allow_encrypted_input)
+	if (cfg->detect_encrypted_input)
 		printf("\tDetect encrypted input.\n");
 	if (cfg->pidfile) {
 		printf("\tDaemonize         : %s\n", cfg->pidfile);
